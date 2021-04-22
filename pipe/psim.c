@@ -532,6 +532,9 @@ void do_fetch_stage()
     // TODO select pc from predPC and writeback scenario
     switch (byte0) {
     case HPACK(I_NOP, F_NONE):
+        decode_input->ra = REG_NONE;
+        decode_input->rb = REG_NONE;
+        decode_input->valc = 0;
         decode_input->valp = f_pc + 1;
         break;
     case HPACK(I_HALT, F_NONE):
@@ -743,7 +746,6 @@ void do_decode_stage()
  *******************************************************************/
 void do_execute_stage()
 {
-    cc_in = cc;
     /* some useful variables for logging purpose */
     bool setcc = false;
     alu_t alufun = A_NONE;
@@ -819,6 +821,7 @@ void do_execute_stage()
         printf("icode is not valid (%d)", execute_output->icode);
         break;
     }
+    cc = cc_in;
 
     /* logging functions, do not change these */
     if (execute_output->icode == I_JMP) {
@@ -867,6 +870,9 @@ void do_memory_stage()
         break;
 
     case I_NOP:
+        writeback_input->deste = REG_NONE;
+        break;
+
     case I_RRMOVQ: // aka CMOVQ
     case I_IRMOVQ:
         break;
