@@ -641,8 +641,8 @@ void do_fetch_stage()
  */
 static void select_pc() {
     // select this f_pc
-    if (memory_output->icode == I_JMP && !memory_output->takebranch) {
-        f_pc = memory_output->vala;
+    if (writeback_output->icode == I_JMP) {
+        f_pc = memory_output->takebranch ? decode_output->valc : decode_output->valp;
     } else if (writeback_output->icode == I_RET) {
         f_pc = writeback_output->valm;
     } else {
@@ -746,6 +746,7 @@ void do_decode_stage()
  *******************************************************************/
 void do_execute_stage()
 {
+    cc_in = cc;
     /* some useful variables for logging purpose */
     bool setcc = false;
     alu_t alufun = A_NONE;
@@ -756,7 +757,6 @@ void do_execute_stage()
     memory_input->status = execute_output->status;
     memory_input->icode = execute_output->icode;
     memory_input->ifun = execute_output->ifun;
-    memory_input->vale = 0;
     memory_input->vala = execute_output->vala;
     memory_input->deste = execute_output->deste;
     memory_input->destm = execute_output->destm;
@@ -798,6 +798,11 @@ void do_execute_stage()
 
     case I_JMP:
         cnd = cond_holds(cc, execute_output->ifun);
+        memory_input->takebranch = true;
+        if (!cnd) {
+            memory_input->takebranch = false;
+            memory_input->deste = REG_NONE;
+        }
         break;
 
     case I_CALL:
