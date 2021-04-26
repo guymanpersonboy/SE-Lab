@@ -17,7 +17,6 @@
 #include "pipeline.h"
 #include "stages.h"
 #include "sim.h"
-static void select_pc();
 
 char simname[] = "Y86-64 Processor: PIPE";
 
@@ -519,7 +518,13 @@ void do_fetch_stage()
 {
     /* your implementation */
     fetch_input->status = STAT_AOK;
-    select_pc();
+    if (writeback_output->icode == I_JMP) {
+        f_pc = memory_output->takebranch ? decode_output->valc : decode_output->valp;
+    } else if (writeback_output->icode == I_RET) {
+        f_pc = writeback_output->valm;
+    } else {
+        f_pc = fetch_output->predPC;
+    }
 
     byte_t byte0;
     imem_error |= !get_byte_val(mem, f_pc, &byte0);
@@ -532,7 +537,6 @@ void do_fetch_stage()
     decode_input->valc = 0;
 
     byte_t tempB;
-    // TODO select pc from predPC and writeback scenario
     switch (byte0) {
     case HPACK(I_NOP, F_NONE):
         decode_input->valp = f_pc + 1;
@@ -627,6 +631,13 @@ void do_fetch_stage()
         printf("Invalid instruction\n");
         break;
     }
+
+    // update predPC
+    if (decode_output->icode == I_JMP || decode_output->icode == I_CALL) {
+        fetch_input->predPC = decode_input->valc;
+    } else {
+        fetch_input->predPC = decode_input->valp;
+    }
     
 
     /* logging function, do not change this */
@@ -635,28 +646,6 @@ void do_fetch_stage()
             f_pc, iname(HPACK(decode_input->icode, decode_input->ifun)));
     }
 }
-
-/**
- * The selectPC block of PIPE
- */
-static void select_pc() {
-    // select this f_pc
-    if (writeback_output->icode == I_JMP) {
-        f_pc = memory_output->takebranch ? decode_output->valc : decode_output->valp;
-    } else if (writeback_output->icode == I_RET) {
-        f_pc = writeback_output->valm;
-    } else {
-        f_pc = fetch_input->predPC;
-    }
-
-    // update predPC
-    if (decode_output->icode == I_JMP || decode_output->icode == I_CALL) {
-        fetch_input->predPC = decode_output->valc;
-    } else {
-        fetch_input->predPC = decode_output->valp;
-    }
-}
-
 
 /*************************** Decode stage ***************************
  * TODO: update [*execute_input]
@@ -954,11 +943,6 @@ void do_writeback_stage()
     wb_valM = writeback_output->valm;
 
     /* your implementation */
-    if (writeback_output->deste != REG_NONE && !imem_error && !dmem_error && instr_valid)
-        set_reg_val(reg, wb_destE, wb_valE);
-    if (writeback_output->destm != REG_NONE && !dmem_error && !imem_error && instr_valid)
-        set_reg_val(reg, wb_destM, wb_valM);
-
 
     status = writeback_output->status;
     if (wb_destE != REG_NONE &&  writeback_output -> status == STAT_AOK) {
@@ -1044,8 +1028,8 @@ void do_stall_check()
             decode_state->op = pipe_cntl("ID", true, false);
             // prog5 forwarding
             // TODO: input or output? pg470 in pdf
-            execute_input->vala = writeback_output->vale;
-            execute_input->valb =  writeback_output->valm;
+            execute_input->vala = writeback_input->vale;
+            execute_input->valb =  writeback_input->valm;
         }
         break;
 
