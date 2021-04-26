@@ -527,14 +527,14 @@ void do_fetch_stage()
     decode_input->status = (imem_error) ? STAT_INS : STAT_AOK;
     decode_input->icode = GET_ICODE(byte0);
     decode_input->ifun = GET_FUN(byte0);
+    decode_input->ra = REG_NONE;
+    decode_input->rb = REG_NONE;
+    decode_input->valc = 0;
 
     byte_t tempB;
     // TODO select pc from predPC and writeback scenario
     switch (byte0) {
     case HPACK(I_NOP, F_NONE):
-        decode_input->ra = REG_NONE;
-        decode_input->rb = REG_NONE;
-        decode_input->valc = 0;
         decode_input->valp = f_pc + 1;
         break;
     case HPACK(I_HALT, F_NONE):
@@ -669,6 +669,13 @@ void do_decode_stage()
     execute_input->status = decode_output->status;
     execute_input->icode = decode_output->icode;
     execute_input->ifun = decode_output->ifun;
+    execute_input->vala = 0;
+    execute_input->valb = 0;
+    execute_input->valc = decode_output->valc;
+    execute_input->srca = REG_NONE;
+    execute_input->srcb = REG_NONE;
+    execute_input->deste = REG_NONE;
+    execute_input->destm = REG_NONE;
 
     // TODO implement forwarding from the further stages
     switch (decode_output->icode) {
@@ -757,6 +764,7 @@ void do_execute_stage()
     memory_input->status = execute_output->status;
     memory_input->icode = execute_output->icode;
     memory_input->ifun = execute_output->ifun;
+    memory_input->vale = 0;
     memory_input->vala = execute_output->vala;
     memory_input->deste = execute_output->deste;
     memory_input->destm = execute_output->destm;
@@ -861,10 +869,7 @@ void do_memory_stage()
     writeback_input->icode = memory_output->icode;
     writeback_input->ifun = memory_output->ifun;
     writeback_input->vale = memory_output->vale;
-
-    // valM <- data memory <- valA
-    dmem_error |= !get_word_val(mem, memory_output->vala, &writeback_input->valm);
-
+    writeback_input->valm = 0;
     writeback_input->deste = memory_output->deste;
     writeback_input->destm = memory_output->destm;
 
@@ -875,9 +880,6 @@ void do_memory_stage()
         break;
 
     case I_NOP:
-        writeback_input->deste = REG_NONE;
-        break;
-
     case I_RRMOVQ: // aka CMOVQ
     case I_IRMOVQ:
         break;
@@ -899,6 +901,7 @@ void do_memory_stage()
     case I_CALL:
         mem_write = true;
         mem_addr = memory_output->vale;
+        // TODO how valp?
         mem_data = memory_output->vala;
         break;
 
@@ -943,14 +946,14 @@ void do_memory_stage()
 /******************** Writeback stage *********************
  * TODO: update [wb_destE, wb_valE, wb_destM, wb_valM, status]
  *******************************************************************/
-void do_writeback_stage() {
+void do_writeback_stage()
+{
     wb_destE = writeback_output->deste;
     wb_valE = writeback_output->vale;
     wb_destM = writeback_output->destm;
     wb_valM = writeback_output->valm;
 
     /* your implementation */
-    // TODO implement forwarding to decode
     if (writeback_output->deste != REG_NONE && !imem_error && !dmem_error && instr_valid)
         set_reg_val(reg, wb_destE, wb_valE);
     if (writeback_output->destm != REG_NONE && !dmem_error && !imem_error && instr_valid)
@@ -997,11 +1000,71 @@ void do_stall_check()
 {
     /* your implementation */
     // dummy placeholders to show the usage of pipe_cntl()
-    fetch_state->op     = pipe_cntl("PC", false, false);
-    decode_state->op    = pipe_cntl("ID", false, false);
-    execute_state->op   = pipe_cntl("EX", false, false);
-    memory_state->op    = pipe_cntl("MEM", false, false);
-    writeback_state->op = pipe_cntl("WB", false, false);
+    // fetch_state->op     = pipe_cntl("PC", false, false);
+    // decode_state->op    = pipe_cntl("ID", false, false);
+    // execute_state->op   = pipe_cntl("EX", false, false);
+    // memory_state->op    = pipe_cntl("MEM", false, false);
+    // writeback_state->op = pipe_cntl("WB", false, false);
+
+    // control hazard prog6
+    if (decode_output->icode == I_RET || execute_output->icode == I_RET || memory_output->icode == I_RET) {
+        fetch_state->op = pipe_cntl("PC", false, true);
+        fetch_state->op = pipe_cntl("PC", false, true);
+        fetch_state->op = pipe_cntl("PC", false, true);
+    }
+    
+    // data hazards (prog2-prog4)
+    // TODO might need I_IRMOVQ specification
+    switch (decode_output->icode) {
+    case I_ALU:
+        // prog2 forwarding
+        if (writeback_output->deste == decode_output->rb) {
+                execute_input->valb = writeback_output->vale;
+        }
+        // prog3 and prog4 forwarding
+        if (memory_output->deste == decode_output->ra) {
+            execute_input->vala = memory_output->vale;
+        }
+        // prog4 forwarding
+        if (execute_output->deste == decode_output->rb) {
+            execute_input->valb = memory_output->vale;
+        }
+
+        break;
+    
+    default:
+        break;
+    }
+
+    // load-use hazards
+    switch (execute_output->icode) {
+    case I_MRMOVQ:
+        if (execute_output->destm == decode_output->ra || execute_output->destm == decode_output->rb) {
+            // prog5 stall
+            decode_state->op = pipe_cntl("ID", true, false);
+            // prog5 forwarding
+            // TODO: input or output? pg470 in pdf
+            execute_input->vala = writeback_output->vale;
+            execute_input->valb =  writeback_output->valm;
+        }
+        break;
+
+    case I_POPQ:
+        // TODO
+        break;
+    
+    case I_JMP: // prog7 control hazard
+        fetch_state->op = pipe_cntl("PC", false, true);
+        decode_state->op = pipe_cntl("ID", false, true);
+
+        // TODO
+        if (!cond_holds(cc, execute_output->ifun)) {
+            fetch_input->predPC = decode_output->valc;
+        }
+    
+    default:
+        break;
+    }
 }
 
 /*
