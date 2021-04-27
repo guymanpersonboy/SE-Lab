@@ -518,6 +518,7 @@ void do_fetch_stage()
 {
     /* your implementation */
     fetch_input->status = STAT_AOK;
+    // 
     if (writeback_output->icode == I_JMP) {
         f_pc = memory_output->takebranch ? decode_output->valc : decode_output->valp;
     } else if (writeback_output->icode == I_RET) {
@@ -529,7 +530,7 @@ void do_fetch_stage()
     byte_t byte0;
     imem_error |= !get_byte_val(mem, f_pc, &byte0);
 
-    decode_input->status = (imem_error) ? STAT_INS : STAT_AOK;
+    decode_input->status = (imem_error) ? STAT_ADR : STAT_AOK;
     decode_input->icode = GET_ICODE(byte0);
     decode_input->ifun = GET_FUN(byte0);
     decode_input->ra = REG_NONE;
@@ -633,7 +634,7 @@ void do_fetch_stage()
     }
 
     // update predPC
-    if (decode_output->icode == I_JMP || decode_output->icode == I_CALL) {
+    if (decode_input->icode == I_JMP || decode_input->icode == I_CALL) {
         fetch_input->predPC = decode_input->valc;
     } else {
         fetch_input->predPC = decode_input->valp;
@@ -670,6 +671,7 @@ void do_decode_stage()
     switch (decode_output->icode) {
     case I_HALT:
     case I_NOP:
+    
         break;
 
     case I_RRMOVQ: // aka CMOVQ
@@ -731,8 +733,12 @@ void do_decode_stage()
         break;
     }
 
+    printf("srca %s\n", reg_name(execute_input->srca));
+    printf("srca %s\n", reg_name(execute_input->srcb));
     execute_input->vala = get_reg_val(reg, execute_input->srca);
     execute_input->valb = get_reg_val(reg, execute_input->srcb);
+    printf("vala: %lld ", execute_input->vala);
+    printf("valb: %lld ", execute_input->valb);
 }
 
 /************************** Execute stage **************************
@@ -742,7 +748,6 @@ void do_decode_stage()
  *******************************************************************/
 void do_execute_stage()
 {
-    cc_in = cc;
     /* some useful variables for logging purpose */
     bool setcc = false;
     alu_t alufun = A_NONE;
@@ -790,6 +795,7 @@ void do_execute_stage()
     case I_ALU:
         memory_input->vale = compute_alu(execute_output->ifun, execute_output->vala, execute_output->valb);
         cc_in = compute_cc(execute_output->ifun, execute_output->vala, execute_output->valb);
+        setcc = true;
         break;
 
     case I_JMP:
@@ -822,7 +828,6 @@ void do_execute_stage()
         printf("icode is not valid (%d)", execute_output->icode);
         break;
     }
-    cc = cc_in;
 
     /* logging functions, do not change these */
     if (execute_output->icode == I_JMP) {
@@ -991,24 +996,37 @@ void do_stall_check()
     // control hazard prog6
     if (decode_output->icode == I_RET || execute_output->icode == I_RET || memory_output->icode == I_RET) {
         fetch_state->op = pipe_cntl("PC", false, true);
-        fetch_state->op = pipe_cntl("PC", false, true);
-        fetch_state->op = pipe_cntl("PC", false, true);
     }
     
     // data hazards (prog2-prog4)
+    // TODO if only I_ALU change switch to if-statement
     switch (decode_output->icode) {
+    case I_RMMOVQ:
     case I_ALU:
         // prog2 forwarding
         if (writeback_output->deste == decode_output->rb) {
-                execute_input->valb = writeback_output->vale;
+            execute_input->valb = writeback_output->vale;
         }
+        // prog3 forwarding
+        if (writeback_output->deste == decode_output->ra) {
+            execute_input->vala = writeback_output->vale;
+        }
+
         // prog3 and prog4 forwarding
         if (memory_output->deste == decode_output->ra) {
             execute_input->vala = memory_output->vale;
         }
+        if (memory_output->deste == decode_output->rb) {
+            execute_input->valb = memory_output->vale;
+        }
+
+        // TODO might need to switch case for each computation in execute stage
+        if (execute_output->deste == decode_output->ra) {
+            execute_input->vala = execute_output->valc;
+        }
         // prog4 forwarding
         if (execute_output->deste == decode_output->rb) {
-            execute_input->valb = memory_output->vale;
+            execute_input->valb = execute_output->valc;
         }
 
         break;
@@ -1017,21 +1035,25 @@ void do_stall_check()
         break;
     }
 
+    // prog5 forwarding
+    if (e_bcond) {
+        execute_input->vala = writeback_output->vale;
+        dmem_error |= !get_word_val(mem, memory_output->vale, &execute_input->valb);
+    }
+
     // load-use hazards
     switch (execute_output->icode) {
     case I_MRMOVQ:
         if (execute_output->destm == decode_output->ra || execute_output->destm == decode_output->rb) {
             // prog5 stall
             decode_state->op = pipe_cntl("ID", true, false);
-            // prog5 forwarding
-            // TODO: input or output? pg470 in pdf
-            execute_input->vala = writeback_input->vale;
-            execute_input->valb =  writeback_input->valm;
+            e_bcond = true;
         }
         break;
 
     case I_POPQ:
         // TODO
+        e_bcond = true;
         break;
     
     case I_JMP: // prog7 control hazard
@@ -1044,6 +1066,7 @@ void do_stall_check()
         }
     
     default:
+        e_bcond = false;
         break;
     }
 }
