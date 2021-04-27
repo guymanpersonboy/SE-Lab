@@ -717,6 +717,7 @@ static byte_t sim_step()
 			default:
 				printf("icode is not valid (%d)", icode);
 				break;
+
 		}
 
     pc = pc_in;

@@ -1,9 +1,0 @@
-	      irmovq $256, %rsp
-	      irmovq $32, %rdx
-	      nop
-	      nop
-	      nop
-	      andq %rsp,%rdx
-	      nop
-	      nop
-	      halt

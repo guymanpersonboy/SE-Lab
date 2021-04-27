@@ -760,7 +760,6 @@ void do_execute_stage()
     memory_input->srca = execute_output->srca;
 
     bool cnd = false;
-    // TODO implement forwarding to decode
     switch (execute_output->icode) {
     case I_HALT:
     case I_NOP:
@@ -862,7 +861,6 @@ void do_memory_stage()
     writeback_input->deste = memory_output->deste;
     writeback_input->destm = memory_output->destm;
 
-    // TODO implement forwarding to decode
     switch (memory_output->icode) {
     case I_HALT:
         writeback_input->status = STAT_HLT;
@@ -998,7 +996,6 @@ void do_stall_check()
     }
     
     // data hazards (prog2-prog4)
-    // TODO might need I_IRMOVQ specification
     switch (decode_output->icode) {
     case I_ALU:
         // prog2 forwarding
