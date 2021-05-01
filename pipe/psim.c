@@ -518,14 +518,9 @@ void do_fetch_stage()
 {
     /* your implementation */
     fetch_input->status = STAT_AOK;
-    if (writeback_output->icode == I_JMP) {
-        f_pc = memory_output->takebranch ? decode_output->valc : decode_output->valp;
-    } else if (writeback_output->icode == I_RET) {
-        f_pc = writeback_output->valm;
-    } else {
-        f_pc = fetch_output->predPC;
-    }
-
+    f_pc = fetch_output->predPC;
+    
+    decode_input->stage_pc = f_pc;
     byte_t byte0;
     imem_error |= !get_byte_val(mem, f_pc, &byte0);
 
@@ -596,7 +591,6 @@ void do_fetch_stage()
     case HPACK(I_CALL, F_NONE):
         imem_error |= !get_word_val(mem, f_pc + 1, &decode_input->valc);
         decode_input->valp = f_pc + 9;
-        e_vala = f_pc + 9;
         break;
 
     case HPACK(I_RET, F_NONE):
@@ -618,15 +612,10 @@ void do_fetch_stage()
     }
 
     // update predPC
-    fetch_input->predPC = decode_input->valp;
-
-    if (decode_input->icode == I_JMP || decode_input->icode == I_CALL) {
-        // detect return immediately
-        get_byte_val(mem, decode_input->valc, &byte0);
-        if (GET_ICODE(byte0) != I_RET) {
-            // doesnt return immediately
+    if (HI4(byte0) == I_JMP || HI4(byte0) == I_CALL) {
             fetch_input->predPC = decode_input->valc;
-        }
+    } else {
+        fetch_input->predPC = decode_input->valp;
     }
 
     /* logging function, do not change this */
@@ -654,6 +643,7 @@ void do_decode_stage()
     execute_input->srcb = REG_NONE;
     execute_input->deste = REG_NONE;
     execute_input->destm = REG_NONE;
+    execute_input->stage_pc = decode_output->stage_pc;
 
     // TODO implement forwarding from the further stages
     switch (decode_output->icode) {
@@ -720,13 +710,58 @@ void do_decode_stage()
         printf("icode is not valid (%d)", decode_output->icode);
         break;
     }
-
-    printf("srca %s\n", reg_name(execute_input->srca));
-    printf("srcb %s\n", reg_name(execute_input->srcb));
     execute_input->vala = get_reg_val(reg, execute_input->srca);
     execute_input->valb = get_reg_val(reg, execute_input->srcb);
-    printf("vala: %lld ", execute_input->vala);
-    printf("valb: %lld ", execute_input->valb);
+
+    if (execute_input->srca != REG_NONE) {
+        // def-use forwarding writeback vale
+        if (writeback_output->deste == execute_input->srca) {
+            execute_input->vala = writeback_output->vale;
+        }
+        // def-use forwarding memory
+        if (memory_output->deste == execute_input->srca) {
+            execute_input->vala = memory_output->vale;
+        }
+        // def-use forwarding execute
+        if (memory_input->deste == execute_input->srca) {
+            execute_input->vala = memory_input->vale;
+        }
+        // load-use forwarding writeback valm
+        if (writeback_output->destm == execute_input->srca) {
+            execute_input->vala = writeback_output->valm;
+        }
+        // load-use forwarding memory valm
+        if (memory_output->destm == execute_input->srca) {
+            execute_input->vala = writeback_input->valm;
+        }
+    }
+    if (execute_input->srcb != REG_NONE) {
+        // def-use forwarding writeback vale
+        if (writeback_output->deste == execute_input->srcb) {
+            execute_input->valb = writeback_output->vale;
+        }
+        // def-use forwarding memory
+        if (memory_output->deste == execute_input->srcb) {
+            execute_input->valb = memory_output->vale;
+        }
+        // def-use forwarding execute
+        if (memory_input->deste == execute_input->srcb) {
+            execute_input->valb = memory_input->vale;
+        }
+        // load-use forwarding writeback valm
+        if (writeback_output->destm == execute_input->srcb) {
+            execute_input->valb = writeback_output->valm;
+        }
+        // load-use forwarding memory valm
+        if (memory_output->destm == execute_input->srcb) {
+            execute_input->valb = writeback_input->valm;
+        }
+    }
+
+    // return address
+    if (decode_output->icode == I_CALL || decode_output->icode == I_JMP) {
+        execute_input->vala = decode_output->valp;
+    }
 }
 
 /************************** Execute stage **************************
@@ -751,19 +786,18 @@ void do_execute_stage()
     memory_input->deste = execute_output->deste;
     memory_input->destm = execute_output->destm;
     memory_input->srca = execute_output->srca;
+    memory_input->stage_pc = execute_output->stage_pc;
 
-    bool cnd = false;
+    e_bcond = false;
     switch (execute_output->icode) {
     case I_HALT:
     case I_NOP:
         break;
 
     case I_RRMOVQ: // aka CMOVQ
-        cnd = cond_holds(cc, execute_output->ifun);
+        e_bcond = cond_holds(cc, execute_output->ifun);
         memory_input->vale = execute_output->vala;
-        memory_input->takebranch = true;
-        if (!cnd) {
-            memory_input->takebranch = false;
+        if (!e_bcond) {
             memory_input->deste = REG_NONE;
         }
         break;
@@ -787,10 +821,8 @@ void do_execute_stage()
         break;
 
     case I_JMP:
-        cnd = cond_holds(cc, execute_output->ifun);
-        memory_input->takebranch = true;
-        if (!cnd) {
-            memory_input->takebranch = false;
+        memory_input->takebranch = cond_holds(cc, execute_output->ifun);;
+        if (!memory_input->takebranch) {
             memory_input->deste = REG_NONE;
         }
         break;
@@ -853,6 +885,7 @@ void do_memory_stage()
     writeback_input->valm = 0;
     writeback_input->deste = memory_output->deste;
     writeback_input->destm = memory_output->destm;
+    writeback_input->stage_pc = memory_output->stage_pc;
 
     switch (memory_output->icode) {
     case I_HALT:
@@ -871,7 +904,7 @@ void do_memory_stage()
         break;
 
     case I_MRMOVQ:
-        dmem_error |= !get_word_val(mem, memory_output->vale, &writeback_input->valm);
+        dmem_error |= !get_word_val(mem, memory_output->vale, &mem_data);
         break;
 
     case I_ALU:
@@ -879,19 +912,6 @@ void do_memory_stage()
         break;
 
     case I_CALL:
-        mem_write = true;
-        mem_addr = memory_output->vale;
-        writeback_input->vale = mem_addr + 8;
-        mem_data = e_vala;
-        e_vala = 0;
-        break;
-
-    case I_RET:
-    case I_POPQ:
-        dmem_error |= !get_word_val(mem, memory_output->vala, &writeback_input->valm);
-        writeback_input->vale = mem_addr - 8;
-        break;
-
     case I_PUSHQ:
         mem_write = true;
         mem_addr = memory_output->vale;
@@ -899,10 +919,24 @@ void do_memory_stage()
         mem_data = memory_output->vala;
         break;
 
+    case I_RET:
+        writeback_input->deste = REG_NONE;
+    case I_POPQ:
+        dmem_error |= !get_word_val(mem, memory_output->vala, &mem_data);
+        mem_addr = memory_output->vale;
+        writeback_input->vale = mem_addr - 8;
+        break;
+
     default:
         writeback_input->status = STAT_INS;
         printf("icode is not valid (%d)", memory_output->icode);
         break;
+    }
+
+    writeback_input->valm = mem_data;
+
+    if (memory_output->icode == I_RET) {
+        fetch_output->predPC = mem_data;
     }
 
     if (mem_read) {
@@ -973,94 +1007,48 @@ p_stat_t pipe_cntl(char *name, word_t stall, word_t bubble)
  *******************************************************************/
 void do_stall_check()
 {
-    /* your implementation */
-    // dummy placeholders to show the usage of pipe_cntl()
-    // fetch_state->op     = pipe_cntl("PC", false, false);
-    // decode_state->op    = pipe_cntl("ID", false, false);
-    // execute_state->op   = pipe_cntl("EX", false, false);
-    // memory_state->op    = pipe_cntl("MEM", false, false);
-    // writeback_state->op = pipe_cntl("WB", false, false);
+    // reset
+    fetch_state->op = pipe_cntl("PC", false, false);
+    decode_state->op = pipe_cntl("ID", false, false);
+    execute_state->op = pipe_cntl("EX", false, false);
+    memory_state->op = pipe_cntl("MEM", false, false);
+    writeback_state->op = pipe_cntl("WB", false, false);
+    
+    switch (execute_output->icode) {
+    case I_MRMOVQ:
+    case I_POPQ:
+        // load-use-hazard
+        if (execute_output->destm == execute_input->srca || execute_output->destm == execute_input->srcb) {
+            fetch_state->op = pipe_cntl("PC", true, false);
+            decode_state->op = pipe_cntl("ID", true, false);
+            execute_state->op = pipe_cntl("EX", false, true);
+        }
+        break;
+    
+    case I_JMP: // mispredicted branch
+        if (!memory_input->takebranch && decode_output->icode == I_RET) {
+            // special case
+            fetch_state->op = pipe_cntl("PC", true, false);
+            decode_state->op = pipe_cntl("ID", false, true);
+            execute_state->op = pipe_cntl("EX", false, true);
+            // vala is valp i.e. fall through
+            fetch_input->predPC = execute_output->vala;
+        } else if (!memory_input->takebranch) {
+            // normal case
+            decode_state->op = pipe_cntl("ID", false, true);
+            execute_state->op = pipe_cntl("EX", false, true);
+            fetch_input->predPC = execute_output->vala;
+        }
 
-    // control hazard prog6
+    default:
+        break;
+    }
+
+    // return instructions must process
     if (decode_output->icode == I_RET || execute_output->icode == I_RET ||
             memory_output->icode == I_RET) {
         fetch_state->op = pipe_cntl("PC", true, false);
-    }
-    
-    // data hazards (prog2-prog4)
-    switch (decode_output->icode) {
-    case I_RMMOVQ:
-    case I_ALU:
-        // prog2 forwarding
-        if (writeback_output->deste == decode_output->rb) {
-            execute_input->valb = writeback_output->vale;
-        }
-        // prog3 forwarding
-        if (writeback_output->deste == decode_output->ra) {
-            execute_input->vala = writeback_output->vale;
-        }
-
-        // prog3 and prog4 forwarding
-        if (memory_output->deste == decode_output->ra) {
-            execute_input->vala = memory_output->vale;
-        }
-        if (memory_output->deste == decode_output->rb) {
-            execute_input->valb = memory_output->vale;
-        }
-
-        // TODO might need a switch-case for each icode in execute stage
-        if (execute_output->deste == decode_output->ra) {
-            execute_input->vala = execute_output->valc;
-        }
-        // prog4 forwarding
-        if (execute_output->deste == decode_output->rb) {
-            execute_input->valb = execute_output->valc;
-        }
-
-        break;
-    
-    default:
-        break;
-    }
-
-    // prog5 forwarding
-    if (e_bcond) {
-        execute_input->vala = writeback_output->vale;
-        dmem_error |= !get_word_val(mem, memory_output->vale, &execute_input->valb);
-    }
-
-    switch (execute_output->icode) {
-    case I_IRMOVQ: // prog6 forwarding
-        if (execute_output->deste == REG_RSP && decode_output->icode == I_CALL) {
-            execute_input->valb = execute_output->valc;
-        }
-        break;
-
-    case I_MRMOVQ:     // load-use hazard
-        if (execute_output->destm == decode_output->ra || execute_output->destm == decode_output->rb) {
-            // prog5 stall
-            decode_state->op = pipe_cntl("ID", true, false);
-            e_bcond = true;
-        }
-        break;
-
-    case I_POPQ:
-        // TODO
-        e_bcond = true;
-        break;
-    
-    case I_JMP: // prog7 control hazard
-        fetch_state->op = pipe_cntl("PC", false, true);
         decode_state->op = pipe_cntl("ID", false, true);
-
-        // TODO
-        if (!cond_holds(cc, execute_output->ifun)) {
-            fetch_input->predPC = decode_output->valc;
-        }
-    
-    default:
-        e_bcond = false;
-        break;
     }
 }
 
