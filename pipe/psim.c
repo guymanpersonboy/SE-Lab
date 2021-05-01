@@ -932,7 +932,6 @@ void do_memory_stage()
         printf("icode is not valid (%d)", memory_output->icode);
         break;
     }
-
     writeback_input->valm = mem_data;
 
     if (memory_output->icode == I_RET) {

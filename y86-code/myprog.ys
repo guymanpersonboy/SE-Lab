@@ -1,2 +1,24 @@
 # Design your own testcase here
-halt
+# int zero() {
+#     return 0;
+# }
+# 
+# int func() {
+#     int x = 1;
+#     x = zero();
+#     int y = x + 2;
+#     return y + y;
+# }
+    irmovq $1, %rax
+    call zero
+    nop
+    irmovq $2, %rdx
+    addq %rdx, %rax
+    addq %rax, %rax
+    nop
+    halt
+.pos 0x25
+zero:               # zero:
+    irmovq 0, %rax
+    ret
+    halt            # Not executed
