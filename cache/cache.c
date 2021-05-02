@@ -34,7 +34,7 @@ int dirty_eviction_count = 0;
 //Increment when a clean eviction occurs
 int clean_eviction_count = 0;
 
-/* TODO: add more globals, structs, macros if necessary */
+// TODO: add more globals, structs, macros if necessary
 
 /*
  * Initialize the cache according to specified arguments
@@ -66,7 +66,7 @@ cache_t *create_cache(int s_in, int b_in, int E_in, int d_in)
         }
     }
 
-    /* TODO: add more code for initialization */
+    // TODO: add more code for initialization
 
     return cache;
 }
@@ -118,7 +118,7 @@ void free_cache(cache_t *cache)
     free(cache);
 }
 
-/* TODO:
+/* // TODO:
  * Get the line for address contained in the cache
  * On hit, return the cache line holding the address
  * On miss, returns NULL
@@ -126,30 +126,76 @@ void free_cache(cache_t *cache)
 cache_line_t *get_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index = set_index >> ADDRESS_LENGTH - cache->s;
+
+    if (check_hit(cache, addr, false)) {
+        return cache->sets[set_index].lines;
+    }
+
     return NULL;
 }
 
-/* TODO:
+/* // TODO:
  * Select the line to fill with the new cache line
  * Return the cache line selected to filled in by addr
  */
 cache_line_t *select_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
-    return NULL;
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index >>= ADDRESS_LENGTH - cache->s; 
+
+    cache_line_t line;
+    uword_t lru;
+    unsigned int lru_way;
+    unsigned int i;
+    for (i = 0; i < cache->E; i++) {
+        // keep track of lru in case we need it
+        if (cache->sets[set_index].lines[i].lru < lru) {
+            lru = cache->sets[set_index].lines[i].lru
+            lru_way = i;
+        }
+        
+        // Case R2a: cache miss, no replacement
+        if (cache->sets[set_index].lines[i].valid == false) {
+            line = cache->sets[set_index].lines[i];
+            break;
+        }
+    }
+    // Case R2b: cache miss, replacement
+    if (i == cache->E) {
+        line = cache->sets[set_index].lines[lru_way];
+    }
+
+    return line;
 }
 
-/* TODO:
+/* // TODO:
  * Check if the address is hit in the cache, updating hit and miss data.
  * Return true if pos hits in the cache.
  */
 bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index >>= ADDRESS_LENGTH - cache->s;
+    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
+    block_offset >>= ADDRESS_LENGTH - cache->b;
+    unsigned int tag = addr >> ADDRESS_LENGTH - cache->s - cache->b;
+
+    for (unsigned int i = 0; i < cache->E; i++) {
+        if (cache->sets[set_index].lines[i].valid && cache->sets[set_index].lines[i].tag == tag) {
+            hit_count++;
+            return true;
+        }
+    }
+    // invalid bit or incorrect tage
+    miss_count++;
     return false;
 }
 
-/* TODO:
+/* // TODO:
  * Handles Misses, evicting from the cache if necessary.
  * Fill out the evicted_line_t struct with info regarding the evicted line.
  */
@@ -158,48 +204,94 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     size_t B = (size_t)pow(2, cache->b);
     evicted_line_t *evicted_line = malloc(sizeof(evicted_line_t));
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
+
     /* your implementation */
+    select_line(cache, addr);
+    // TODO select way??
+    if (dirty) {
+        dirty_eviction_count++;
+    } else {
+        clean_eviction_count++;
+    }
+
     return evicted_line;
 }
 
-/* TODO:
+/* // TODO:
  * Get a byte from the cache and write it to dest.
  * Preconditon: pos is contained within the cache.
  */
 void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 {
     /* your implementation */
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index >>= ADDRESS_LENGTH - cache->s;
+    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
+    block_offset >>= ADDRESS_LENGTH - cache->b;
+    unsigned int block_address = addr >> cache->b;
+
+    // refelcts get_byte_val of isa.c
+    *dest = cache->sets[set_index].lines[block_address].data[block_offset];
 }
 
 
-/* TODO:
+/* // TODO:
  * Get 8 bytes from the cache and write it to dest.
  * Preconditon: pos is contained within the cache.
  */
-void get_word_cache(cache_t *cache, uword_t addr, word_t *dest) {
-
+void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
+{
     /* your implementation */
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index >>= ADDRESS_LENGTH - cache->s;
+    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
+    block_offset >>= ADDRESS_LENGTH - cache->b;
+    unsigned int block_address = addr >> cache->b;
+
+    word_t val = 0;
+    // reflects get_word_val of isa.c
+    for (int i = 0; i < 8; i++) {
+        word_t b = cache->sets[set_index].lines[block_address].data[i + block_offset] && 0xFF;
+        val = val | (b << (8 * i));
+    }
+    *dest = val;
 }
 
 
-/* TODO:
+/* // TODO:
  * Set 1 byte in the cache to val at pos.
  * Preconditon: pos is contained within the cache.
  */
 void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
 {
-
     /* your implementation */
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index >>= ADDRESS_LENGTH - cache->s;
+    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
+    block_offset >>= ADDRESS_LENGTH - cache->b;
+    unsigned int block_address = addr >> cache->b;
+
+    cache->sets[set_index].lines[block_address].data[block_offset] = val;
 }
 
 
-/* TODO:
+/* // TODO:
  * Set 8 bytes in the cache to val at pos.
  * Preconditon: pos is contained within the cache.
  */
 void set_word_cache(cache_t *cache, uword_t addr, word_t val)
 {
     /* your implementation */
+    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
+    set_index >>= ADDRESS_LENGTH - cache->s;
+    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
+    block_offset >>= ADDRESS_LENGTH - cache->b;
+    unsigned int block_address = addr >> cache->b;
+
+    for (int i = 0; i < 8; i++) {
+        cache->sets[set_index].lines[block_address].data[block_offset + i] = (byte_t) val & 0xFF;
+        val >>= 8;
+    }
 }
 
 /*
