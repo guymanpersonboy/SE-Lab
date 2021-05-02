@@ -645,7 +645,6 @@ void do_decode_stage()
     execute_input->destm = REG_NONE;
     execute_input->stage_pc = decode_output->stage_pc;
 
-    // TODO implement forwarding from the further stages
     switch (decode_output->icode) {
     case I_HALT:
     case I_NOP:
@@ -758,7 +757,7 @@ void do_decode_stage()
         }
     }
 
-    // return address
+    // return address forwarding
     if (decode_output->icode == I_CALL || decode_output->icode == I_JMP) {
         execute_input->vala = decode_output->valp;
     }
@@ -1012,6 +1011,14 @@ void do_stall_check()
     execute_state->op = pipe_cntl("EX", false, false);
     memory_state->op = pipe_cntl("MEM", false, false);
     writeback_state->op = pipe_cntl("WB", false, false);
+
+    // return instructions must process
+    // load-use after correctly handles combination B
+    if (decode_output->icode == I_RET || execute_output->icode == I_RET ||
+            memory_output->icode == I_RET) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
+    }
     
     switch (execute_output->icode) {
     case I_MRMOVQ:
@@ -1026,7 +1033,7 @@ void do_stall_check()
     
     case I_JMP: // mispredicted branch
         if (!memory_input->takebranch && decode_output->icode == I_RET) {
-            // special case
+            // combination A: mispredicted jmp and ret
             fetch_state->op = pipe_cntl("PC", true, false);
             decode_state->op = pipe_cntl("ID", false, true);
             execute_state->op = pipe_cntl("EX", false, true);
@@ -1041,13 +1048,6 @@ void do_stall_check()
 
     default:
         break;
-    }
-
-    // return instructions must process
-    if (decode_output->icode == I_RET || execute_output->icode == I_RET ||
-            memory_output->icode == I_RET) {
-        fetch_state->op = pipe_cntl("PC", true, false);
-        decode_state->op = pipe_cntl("ID", false, true);
     }
 }
 
