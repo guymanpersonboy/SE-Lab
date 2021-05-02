@@ -35,6 +35,7 @@ int dirty_eviction_count = 0;
 int clean_eviction_count = 0;
 
 // TODO: add more globals, structs, macros if necessary
+static unsigned int way = 0;
 
 /*
  * Initialize the cache according to specified arguments
@@ -126,11 +127,11 @@ void free_cache(cache_t *cache)
 cache_line_t *get_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index = set_index >> ADDRESS_LENGTH - cache->s;
+    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
+    set_index >>= (ADDRESS_LENGTH - cache->s);
 
     if (check_hit(cache, addr, false)) {
-        return cache->sets[set_index].lines;
+        return &cache->sets[set_index].lines[way];
     }
 
     return NULL;
@@ -143,32 +144,27 @@ cache_line_t *get_line(cache_t *cache, uword_t addr)
 cache_line_t *select_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index >>= ADDRESS_LENGTH - cache->s; 
+    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
+    set_index >>= (ADDRESS_LENGTH - cache->s);
 
-    cache_line_t line;
     uword_t lru;
     unsigned int lru_way;
     unsigned int i;
     for (i = 0; i < cache->E; i++) {
         // keep track of lru in case we need it
         if (cache->sets[set_index].lines[i].lru < lru) {
-            lru = cache->sets[set_index].lines[i].lru
+            lru = cache->sets[set_index].lines[i].lru;
             lru_way = i;
         }
         
         // Case R2a: cache miss, no replacement
         if (cache->sets[set_index].lines[i].valid == false) {
-            line = cache->sets[set_index].lines[i];
+            return &cache->sets[set_index].lines[i];
             break;
         }
     }
     // Case R2b: cache miss, replacement
-    if (i == cache->E) {
-        line = cache->sets[set_index].lines[lru_way];
-    }
-
-    return line;
+    return &cache->sets[set_index].lines[lru_way];
 }
 
 /* // TODO:
@@ -178,15 +174,22 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
 bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index >>= ADDRESS_LENGTH - cache->s;
-    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
-    block_offset >>= ADDRESS_LENGTH - cache->b;
-    unsigned int tag = addr >> ADDRESS_LENGTH - cache->s - cache->b;
+    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
+    set_index >>= (ADDRESS_LENGTH - cache->s);
+    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    unsigned int tag = addr >> (ADDRESS_LENGTH - cache->s - cache->b);
 
     for (unsigned int i = 0; i < cache->E; i++) {
         if (cache->sets[set_index].lines[i].valid && cache->sets[set_index].lines[i].tag == tag) {
             hit_count++;
+            way = i;
+            // TODO update dirty bit?
+            if (operation == WRITE) {
+                cache->sets[set_index].lines[i].dirty = true;
+                dirty_eviction_count++;
+            }
+            
             return true;
         }
     }
@@ -206,13 +209,26 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
 
     /* your implementation */
-    select_line(cache, addr);
-    // TODO select way??
-    if (dirty) {
+    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
+    set_index >>= (ADDRESS_LENGTH - cache->s);
+    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+
+    cache_line_t *line = select_line(cache, addr);
+    evicted_line->valid = line->valid;
+    // TODO make address for evicted line??
+    evicted_line->addr = ((line->tag << (cache->s + cache->b)) | (set_index << cache->b) | block_offset);
+    evicted_line->data = line->data;
+
+    if (line->dirty) {
         dirty_eviction_count++;
+        evicted_line->dirty = true;
     } else {
         clean_eviction_count++;
+        evicted_line->dirty = false;
     }
+
+    // TODO operation, incoming data
 
     return evicted_line;
 }
@@ -224,14 +240,11 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
 void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index >>= ADDRESS_LENGTH - cache->s;
-    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
-    block_offset >>= ADDRESS_LENGTH - cache->b;
-    unsigned int block_address = addr >> cache->b;
-
+    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    cache_line_t *line = get_line(cache, addr);
     // refelcts get_byte_val of isa.c
-    *dest = cache->sets[set_index].lines[block_address].data[block_offset];
+    *dest = line->data[block_offset];
 }
 
 
@@ -242,16 +255,13 @@ void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index >>= ADDRESS_LENGTH - cache->s;
-    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
-    block_offset >>= ADDRESS_LENGTH - cache->b;
-    unsigned int block_address = addr >> cache->b;
-
-    word_t val = 0;
+    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    cache_line_t *line = get_line(cache, addr);
     // reflects get_word_val of isa.c
+    word_t val = 0;
     for (int i = 0; i < 8; i++) {
-        word_t b = cache->sets[set_index].lines[block_address].data[i + block_offset] && 0xFF;
+        word_t b = line->data[i + block_offset] && 0xFF;
         val = val | (b << (8 * i));
     }
     *dest = val;
@@ -265,13 +275,13 @@ void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
 void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index >>= ADDRESS_LENGTH - cache->s;
-    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
-    block_offset >>= ADDRESS_LENGTH - cache->b;
-    unsigned int block_address = addr >> cache->b;
-
-    cache->sets[set_index].lines[block_address].data[block_offset] = val;
+    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    cache_line_t *line = get_line(cache, addr);
+    // reflects set_byte_val of isa.c
+    line->data[block_offset] = val;
+    // TODO dirty??
+    line->dirty = true;
 }
 
 
@@ -282,16 +292,16 @@ void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
 void set_word_cache(cache_t *cache, uword_t addr, word_t val)
 {
     /* your implementation */
-    unsigned int set_index = addr << ADDRESS_LENGTH - cache->s - cache->b;
-    set_index >>= ADDRESS_LENGTH - cache->s;
-    unsigned int block_offset = addr << ADDRESS_LENGTH - cache->b;
-    block_offset >>= ADDRESS_LENGTH - cache->b;
-    unsigned int block_address = addr >> cache->b;
-
+    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    cache_line_t *line = get_line(cache, addr);
+    // reflects set_word_val of isa.c
     for (int i = 0; i < 8; i++) {
-        cache->sets[set_index].lines[block_address].data[block_offset + i] = (byte_t) val & 0xFF;
+        line->data[block_offset + i] = (byte_t) val & 0xFF;
         val >>= 8;
     }
+    // TODO dirty??
+    line->dirty = true;
 }
 
 /*
