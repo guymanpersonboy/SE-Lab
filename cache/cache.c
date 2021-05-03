@@ -253,7 +253,7 @@ void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
     uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = get_line(cache, addr);
     // refelcts get_byte_val of isa.c
-    memcpy(dest, &line->data[block_offset], sizeof(byte_t));
+    *dest = line->data[block_offset];
 }
 
 
@@ -272,7 +272,7 @@ void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
         word_t b = line->data[i + block_offset] && 0xFF;
         val = val | (b << (8 * i));
     }
-    memcpy(dest, &val, sizeof(word_t));
+    *dest = val;
 }
 
 

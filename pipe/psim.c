@@ -732,7 +732,7 @@ void do_decode_stage()
     if (memory_output->destm == execute_input->srca) {
         execute_input->vala = writeback_input->valm;
     }
-    
+
     // def-use forwarding writeback vale
     if (writeback_output->deste == execute_input->srcb) {
         execute_input->valb = writeback_output->vale;
@@ -811,8 +811,11 @@ void do_execute_stage()
         break;
 
     case I_ALU:
-        memory_input->vale = compute_alu(execute_output->ifun, execute_output->vala, execute_output->valb);
-        cc_in = compute_cc(execute_output->ifun, execute_output->vala, execute_output->valb);
+        alufun = execute_output->ifun;
+        alua = execute_output->vala;
+        alub = execute_output->valb;
+        memory_input->vale = compute_alu(alufun, alua, alub);
+        cc_in = compute_cc(alufun, alua, alub);
         setcc = true;
         break;
 
@@ -824,17 +827,11 @@ void do_execute_stage()
         break;
 
     case I_CALL:
-        memory_input->vale = execute_output->valb - 8;
-        break;
-
-    case I_RET:
-        memory_input->vale = execute_output->valb + 8;
-        break;
-
     case I_PUSHQ:
         memory_input->vale = execute_output->valb - 8;
         break;
 
+    case I_RET:
     case I_POPQ:
         memory_input->vale = execute_output->valb + 8;
         break;
@@ -900,7 +897,8 @@ void do_memory_stage()
         break;
 
     case I_MRMOVQ:
-        dmem_error |= !get_word_val(mem, memory_output->vale, &mem_data);
+        mem_read = true;
+        mem_addr = memory_output->vale;
         break;
 
     case I_ALU:
@@ -916,18 +914,14 @@ void do_memory_stage()
 
     case I_RET:
     case I_POPQ:
-        dmem_error |= !get_word_val(mem, memory_output->vala, &mem_data);
+        mem_read = true;
+        mem_addr = memory_output->vala;
         break;
 
     default:
         writeback_input->status = STAT_INS;
         printf("icode is not valid (%d)", memory_output->icode);
         break;
-    }
-    writeback_input->valm = mem_data;
-
-    if (memory_output->icode == I_RET) {
-        fetch_output->predPC = mem_data;
     }
 
     if (mem_read) {
@@ -938,6 +932,10 @@ void do_memory_stage()
                 mem_data, mem_addr);
         }
     }
+    if (memory_output->icode == I_RET) {
+        fetch_output->predPC = mem_data;
+    }
+    writeback_input->valm = mem_data;
 
     if (mem_write) {
         if ((dmem_error |= !set_word_val(mem, mem_addr, mem_data))) {
@@ -961,12 +959,12 @@ void do_writeback_stage()
     /* your implementation */
 
     status = writeback_output->status;
-    if (wb_destE != REG_NONE &&  writeback_output -> status == STAT_AOK) {
+    if (wb_destE != REG_NONE && writeback_output -> status == STAT_AOK) {
 	    sim_log("\tWriteback: Wrote 0x%llx to register %s\n",
 		    wb_valE, reg_name(wb_destE));
 	    set_reg_val(reg, wb_destE, wb_valE);
     }
-    if (wb_destM != REG_NONE &&  writeback_output -> status == STAT_AOK) {
+    if (wb_destM != REG_NONE && writeback_output -> status == STAT_AOK) {
 	    sim_log("\tWriteback: Wrote 0x%llx to register %s\n",
 		    wb_valM, reg_name(wb_destM));
 	    set_reg_val(reg, wb_destM, wb_valM);
@@ -981,8 +979,9 @@ p_stat_t pipe_cntl(char *name, word_t stall, word_t bubble)
             sim_log("%s: Conflicting control signals for pipe register\n",
                 name);
             return P_ERROR;
-        } else
+        } else {
             return P_STALL;
+        }
     } else {
 	    return bubble ? P_BUBBLE : P_LOAD;
     }
@@ -998,6 +997,7 @@ p_stat_t pipe_cntl(char *name, word_t stall, word_t bubble)
  *******************************************************************/
 void do_stall_check()
 {
+    /* your implementation */
     // reset
     fetch_state->op = pipe_cntl("PC", false, false);
     decode_state->op = pipe_cntl("ID", false, false);
@@ -1038,6 +1038,7 @@ void do_stall_check()
             execute_state->op = pipe_cntl("EX", false, true);
             fetch_input->predPC = execute_output->vala;
         }
+        break;
 
     default:
         break;
