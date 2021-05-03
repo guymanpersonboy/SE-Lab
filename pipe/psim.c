@@ -712,49 +712,46 @@ void do_decode_stage()
     execute_input->vala = get_reg_val(reg, execute_input->srca);
     execute_input->valb = get_reg_val(reg, execute_input->srcb);
 
-    if (execute_input->srca != REG_NONE) {
-        // def-use forwarding writeback vale
-        if (writeback_output->deste == execute_input->srca) {
-            execute_input->vala = writeback_output->vale;
-        }
-        // def-use forwarding memory
-        if (memory_output->deste == execute_input->srca) {
-            execute_input->vala = memory_output->vale;
-        }
-        // def-use forwarding execute
-        if (memory_input->deste == execute_input->srca) {
-            execute_input->vala = memory_input->vale;
-        }
-        // load-use forwarding writeback valm
-        if (writeback_output->destm == execute_input->srca) {
-            execute_input->vala = writeback_output->valm;
-        }
-        // load-use forwarding memory valm
-        if (memory_output->destm == execute_input->srca) {
-            execute_input->vala = writeback_input->valm;
-        }
+    // def-use forwarding writeback vale
+    if (writeback_output->deste == execute_input->srca) {
+        execute_input->vala = writeback_output->vale;
     }
-    if (execute_input->srcb != REG_NONE) {
-        // def-use forwarding writeback vale
-        if (writeback_output->deste == execute_input->srcb) {
-            execute_input->valb = writeback_output->vale;
-        }
-        // def-use forwarding memory
-        if (memory_output->deste == execute_input->srcb) {
-            execute_input->valb = memory_output->vale;
-        }
-        // def-use forwarding execute
-        if (memory_input->deste == execute_input->srcb) {
-            execute_input->valb = memory_input->vale;
-        }
-        // load-use forwarding writeback valm
-        if (writeback_output->destm == execute_input->srcb) {
-            execute_input->valb = writeback_output->valm;
-        }
-        // load-use forwarding memory valm
-        if (memory_output->destm == execute_input->srcb) {
-            execute_input->valb = writeback_input->valm;
-        }
+    // def-use forwarding memory
+    if (memory_output->deste == execute_input->srca) {
+        execute_input->vala = memory_output->vale;
+    }
+    // def-use forwarding execute
+    if (memory_input->deste == execute_input->srca) {
+        execute_input->vala = memory_input->vale;
+    }
+    // load-use forwarding writeback valm
+    if (writeback_output->destm == execute_input->srca) {
+        execute_input->vala = writeback_output->valm;
+    }
+    // load-use forwarding memory valm
+    if (memory_output->destm == execute_input->srca) {
+        execute_input->vala = writeback_input->valm;
+    }
+    
+    // def-use forwarding writeback vale
+    if (writeback_output->deste == execute_input->srcb) {
+        execute_input->valb = writeback_output->vale;
+    }
+    // def-use forwarding memory
+    if (memory_output->deste == execute_input->srcb) {
+        execute_input->valb = memory_output->vale;
+    }
+    // def-use forwarding execute
+    if (memory_input->deste == execute_input->srcb) {
+        execute_input->valb = memory_input->vale;
+    }
+    // load-use forwarding writeback valm
+    if (writeback_output->destm == execute_input->srcb) {
+        execute_input->valb = writeback_output->valm;
+    }
+    // load-use forwarding memory valm
+    if (memory_output->destm == execute_input->srcb) {
+        execute_input->valb = writeback_input->valm;
     }
 
     // return address forwarding
