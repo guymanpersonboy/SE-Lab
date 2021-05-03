@@ -37,8 +37,8 @@ int dirty_eviction_count = 0;
 int clean_eviction_count = 0;
 
 // TODO: add more globals, structs, macros if necessary
-// save correct way if a check hit for use in get_line()
-static unsigned int way = 0;
+// keep track of the current lru time stamp
+static uword_t lru_stamp = 0;
 
 /*
  * Initialize the cache according to specified arguments
@@ -122,7 +122,7 @@ void free_cache(cache_t *cache)
     free(cache);
 }
 
-/* // TODO:
+/*  TODO:
  * Get the line for address contained in the cache
  * On hit, return the cache line holding the address
  * On miss, returns NULL
@@ -131,15 +131,20 @@ cache_line_t *get_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
     uword_t set_index = get_set_index(cache, addr);
+    cache_set_t set = cache->sets[set_index];
+    // right shift out set index and block offset
+    uword_t tag = addr >> (cache->s + cache->b);
 
-    if (check_hit(cache, addr, false)) {
-        return &cache->sets[set_index].lines[way];
+    for (unsigned int i = 0; i < cache->E; i++) {
+        if (set.lines[i].valid && set.lines[i].tag == tag) {
+            return &set.lines[i];
+        }
     }
 
     return NULL;
 }
 
-/* // TODO:
+/* TODO:
  * Select the line to fill with the new cache line
  * Return the cache line selected to filled in by addr
  */
@@ -147,28 +152,35 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
     uword_t set_index = get_set_index(cache, addr);
+    cache_set_t set = cache->sets[set_index];
 
-    uword_t lru;
+    uword_t cur_lru = set.lines[0].lru;
     unsigned int lru_way;
-    unsigned int i;
-    for (i = 0; i < cache->E; i++) {
-        // keep track of lru in case we need it
-        if (cache->sets[set_index].lines[i].lru < lru) {
-            lru = cache->sets[set_index].lines[i].lru;
+    for (unsigned int i = 0; i < cache->E; i++) {
+        // keep track of lru and its way in case we need it
+        if (set.lines[i].lru < cur_lru) {
+            cur_lru = set.lines[i].lru;
             lru_way = i;
         }
-        
         // Case R2a: cache miss, no replacement
-        if (cache->sets[set_index].lines[i].valid == false) {
-            return &cache->sets[set_index].lines[i];
-            break;
+        if (!set.lines[i].valid) {
+            set.lines->lru = lru_stamp;
+            lru_stamp++;
+            // TODO set to valid? update tag??
+            set.lines->valid = true;
+            return &set.lines[i];
         }
     }
+
     // Case R2b: cache miss, replacement
-    return &cache->sets[set_index].lines[lru_way];
+    set.lines->lru = lru_stamp;
+    lru_stamp++;
+    // TODO set to valid? update tag??
+    set.lines->valid = true;
+    return &set.lines[lru_way];
 }
 
-/* // TODO:
+/* TODO:
  * Check if the address is hit in the cache, updating hit and miss data.
  * Return true if pos hits in the cache.
  */
@@ -176,28 +188,26 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
     uword_t set_index = get_set_index(cache, addr);
+    cache_set_t set = cache->sets[set_index];
     // right shift out set index and block offset
     uword_t tag = addr >> (cache->s + cache->b);
 
     for (unsigned int i = 0; i < cache->E; i++) {
-        if (cache->sets[set_index].lines[i].valid && cache->sets[set_index].lines[i].tag == tag) {
+        if (set.lines[i].valid && set.lines[i].tag == tag) {
             hit_count++;
-            way = i;
-            // TODO update dirty bit?
+            // TODO update dirty bit? set lru?
             if (operation == WRITE) {
-                cache->sets[set_index].lines[i].dirty = true;
-                dirty_eviction_count++;
+                set.lines[i].dirty = true;
             }
             
             return true;
         }
     }
     // false valid bit or incorrect tag
-    miss_count++;
     return false;
 }
 
-/* // TODO:
+/* TODO:
  * Handles Misses, evicting from the cache if necessary.
  * Fill out the evicted_line_t struct with info regarding the evicted line.
  */
@@ -206,32 +216,39 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     size_t B = (size_t)pow(2, cache->b);
     evicted_line_t *evicted_line = malloc(sizeof(evicted_line_t));
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
+    miss_count++;
 
     /* your implementation */
     uword_t set_index = get_set_index(cache, addr);
+    // TODO already all zeroes??
     uword_t block_offset = get_block_offset(cache, addr);
-    cache_line_t *line = select_line(cache, addr);
+    cache_line_t *old_line = select_line(cache, addr);
 
-    evicted_line->valid = line->valid;
-    // TODO make address for evicted line??
+    // copy old_line data over to evicted_line
+    evicted_line->valid = old_line->valid;
+    evicted_line->dirty = old_line->dirty;
     evicted_line->addr =
-        ((line->tag << (cache->s + cache->b)) | (set_index << cache->b) | block_offset);
-    evicted_line->data = line->data;
+        ((old_line->tag << (cache->s + cache->b)) | (set_index << cache->b) | block_offset);
+    evicted_line->data = old_line->data;
 
-    if (line->dirty) {
-        dirty_eviction_count++;
-        evicted_line->dirty = true;
-    } else {
-        clean_eviction_count++;
-        evicted_line->dirty = false;
+    // TODO operation, incoming data??
+    if (operation == READ) {
+        // TODO
+    } else { // operation == WRITE
+        // TODO
+        old_line->data = incoming_data;
     }
 
-    // TODO operation, incoming data
+    if (evicted_line->dirty) {
+        dirty_eviction_count++;
+    } else {
+        clean_eviction_count++;
+    }
 
     return evicted_line;
 }
 
-/* // TODO:
+/* TODO:
  * Get a byte from the cache and write it to dest.
  * Preconditon: pos is contained within the cache.
  */
@@ -245,7 +262,7 @@ void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 }
 
 
-/* // TODO:
+/* TODO:
  * Get 8 bytes from the cache and write it to dest.
  * Preconditon: pos is contained within the cache.
  */
@@ -264,7 +281,7 @@ void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
 }
 
 
-/* // TODO:
+/* TODO:
  * Set 1 byte in the cache to val at pos.
  * Preconditon: pos is contained within the cache.
  */
@@ -275,12 +292,12 @@ void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
     cache_line_t *line = get_line(cache, addr);
     // reflects set_byte_val of isa.c
     line->data[block_offset] = val;
-    // TODO dirty??
+    // TODO dirty?? udpate anything else?
     line->dirty = true;
 }
 
 
-/* // TODO:
+/* TODO:
  * Set 8 bytes in the cache to val at pos.
  * Preconditon: pos is contained within the cache.
  */
@@ -294,12 +311,12 @@ void set_word_cache(cache_t *cache, uword_t addr, word_t val)
         line->data[block_offset + i] = (byte_t) val & 0xFF;
         val >>= 8;
     }
-    // TODO dirty??
+    // TODO dirty?? upate anything else?
     line->dirty = true;
 }
 
 /*
- * retrieve set_index from addr and return the value
+ * helper function to retrieve set_index from addr and return the value
  */
 static uword_t get_set_index(cache_t *cache, uword_t addr) {
     // left shift out tag: t = m - s - b
@@ -310,7 +327,7 @@ static uword_t get_set_index(cache_t *cache, uword_t addr) {
 }
 
 /*
- * retrieve block_offset from addr and returnt the value
+ * helper function to retrieve block_offset from addr and returnt the value
  */
 static uword_t get_block_offset(cache_t *cache, uword_t addr) {
     // left shift out tag and set index: t + s = m - b

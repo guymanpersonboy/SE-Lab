@@ -914,16 +914,12 @@ void do_memory_stage()
     case I_PUSHQ:
         mem_write = true;
         mem_addr = memory_output->vale;
-        writeback_input->vale = mem_addr + 8;
         mem_data = memory_output->vala;
         break;
 
     case I_RET:
-        writeback_input->deste = REG_NONE;
     case I_POPQ:
         dmem_error |= !get_word_val(mem, memory_output->vala, &mem_data);
-        mem_addr = memory_output->vale;
-        writeback_input->vale = mem_addr - 8;
         break;
 
     default:
