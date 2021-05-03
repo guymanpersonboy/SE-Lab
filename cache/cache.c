@@ -137,6 +137,8 @@ cache_line_t *get_line(cache_t *cache, uword_t addr)
 
     for (unsigned int i = 0; i < cache->E; i++) {
         if (set.lines[i].valid && set.lines[i].tag == tag) {
+            set.lines[i].lru = lru_stamp;
+            lru_stamp++;
             return &set.lines[i];
         }
     }
@@ -155,7 +157,7 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
     cache_set_t set = cache->sets[set_index];
 
     uword_t cur_lru = set.lines[0].lru;
-    unsigned int lru_way;
+    unsigned int lru_way = 0;
     for (unsigned int i = 0; i < cache->E; i++) {
         // keep track of lru and its way in case we need it
         if (set.lines[i].lru < cur_lru) {
@@ -166,8 +168,6 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
         if (!set.lines[i].valid) {
             set.lines->lru = lru_stamp;
             lru_stamp++;
-            // TODO set to valid? update tag??
-            set.lines->valid = true;
             return &set.lines[i];
         }
     }
@@ -175,8 +175,6 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
     // Case R2b: cache miss, replacement
     set.lines->lru = lru_stamp;
     lru_stamp++;
-    // TODO set to valid? update tag??
-    set.lines->valid = true;
     return &set.lines[lru_way];
 }
 
@@ -195,7 +193,7 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
     for (unsigned int i = 0; i < cache->E; i++) {
         if (set.lines[i].valid && set.lines[i].tag == tag) {
             hit_count++;
-            // TODO update dirty bit? set lru?
+            lru_stamp++;
             if (operation == WRITE) {
                 set.lines[i].dirty = true;
             }
@@ -220,28 +218,25 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
 
     /* your implementation */
     uword_t set_index = get_set_index(cache, addr);
-    // TODO already all zeroes??
-    uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *old_line = select_line(cache, addr);
 
     // copy old_line data over to evicted_line
     evicted_line->valid = old_line->valid;
+    old_line->valid = true;
     evicted_line->dirty = old_line->dirty;
-    evicted_line->addr =
-        ((old_line->tag << (cache->s + cache->b)) | (set_index << cache->b) | block_offset);
-    evicted_line->data = old_line->data;
+    evicted_line->addr = (old_line->tag << (cache->s + cache->b)) | (set_index << cache->b);
+    memcpy(evicted_line->data, old_line->data, B);
 
-    // TODO operation, incoming data??
-    if (operation == READ) {
-        // TODO
-    } else { // operation == WRITE
-        // TODO
-        old_line->data = incoming_data;
+    if (incoming_data) {
+        memcpy(old_line->data, incoming_data, B);
+        if (operation == WRITE) {
+            old_line->dirty = true;
+        }
     }
 
-    if (evicted_line->dirty) {
+    if (evicted_line->dirty && evicted_line->valid) {
         dirty_eviction_count++;
-    } else {
+    } else if (evicted_line->valid) {
         clean_eviction_count++;
     }
 
@@ -258,7 +253,7 @@ void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
     uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = get_line(cache, addr);
     // refelcts get_byte_val of isa.c
-    *dest = line->data[block_offset];
+    memcpy(dest, &line->data[block_offset], sizeof(byte_t));
 }
 
 
@@ -277,7 +272,7 @@ void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
         word_t b = line->data[i + block_offset] && 0xFF;
         val = val | (b << (8 * i));
     }
-    *dest = val;
+    memcpy(dest, &val, sizeof(word_t));
 }
 
 
@@ -292,8 +287,6 @@ void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
     cache_line_t *line = get_line(cache, addr);
     // reflects set_byte_val of isa.c
     line->data[block_offset] = val;
-    // TODO dirty?? udpate anything else?
-    line->dirty = true;
 }
 
 
@@ -311,8 +304,6 @@ void set_word_cache(cache_t *cache, uword_t addr, word_t val)
         line->data[block_offset + i] = (byte_t) val & 0xFF;
         val >>= 8;
     }
-    // TODO dirty?? upate anything else?
-    line->dirty = true;
 }
 
 /*
