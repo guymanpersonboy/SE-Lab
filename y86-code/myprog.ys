@@ -19,6 +19,6 @@
     halt
 .pos 0x25
 zero:               # zero:
-    irmovq 0, %rax
+    xorq %rax, %rax
     ret
     halt            # Not executed

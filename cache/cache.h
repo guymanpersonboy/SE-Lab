@@ -27,7 +27,6 @@ typedef struct cache {
     unsigned int d; /* cache delay */
 } cache_t;
 
-
 typedef enum {
     READ,
     WRITE

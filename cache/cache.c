@@ -16,6 +16,8 @@
 #include <string.h>
 #include <errno.h>
 #include "cache.h"
+static uword_t get_set_index(cache_t *cache, uword_t addr);
+static uword_t get_block_offset(cache_t *cache, uword_t addr);
 
 #define ADDRESS_LENGTH 64
 
@@ -35,6 +37,7 @@ int dirty_eviction_count = 0;
 int clean_eviction_count = 0;
 
 // TODO: add more globals, structs, macros if necessary
+// save correct way if a check hit for use in get_line()
 static unsigned int way = 0;
 
 /*
@@ -127,8 +130,7 @@ void free_cache(cache_t *cache)
 cache_line_t *get_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
-    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
-    set_index >>= (ADDRESS_LENGTH - cache->s);
+    uword_t set_index = get_set_index(cache, addr);
 
     if (check_hit(cache, addr, false)) {
         return &cache->sets[set_index].lines[way];
@@ -144,8 +146,7 @@ cache_line_t *get_line(cache_t *cache, uword_t addr)
 cache_line_t *select_line(cache_t *cache, uword_t addr)
 {
     /* your implementation */
-    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
-    set_index >>= (ADDRESS_LENGTH - cache->s);
+    uword_t set_index = get_set_index(cache, addr);
 
     uword_t lru;
     unsigned int lru_way;
@@ -174,11 +175,9 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
 bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
-    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
-    set_index >>= (ADDRESS_LENGTH - cache->s);
-    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
-    unsigned int tag = addr >> (ADDRESS_LENGTH - cache->s - cache->b);
+    uword_t set_index = get_set_index(cache, addr);
+    // right shift out set index and block offset
+    uword_t tag = addr >> (cache->s + cache->b);
 
     for (unsigned int i = 0; i < cache->E; i++) {
         if (cache->sets[set_index].lines[i].valid && cache->sets[set_index].lines[i].tag == tag) {
@@ -193,7 +192,7 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
             return true;
         }
     }
-    // invalid bit or incorrect tage
+    // false valid bit or incorrect tag
     miss_count++;
     return false;
 }
@@ -209,15 +208,14 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
 
     /* your implementation */
-    unsigned int set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
-    set_index >>= (ADDRESS_LENGTH - cache->s);
-    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
-
+    uword_t set_index = get_set_index(cache, addr);
+    uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = select_line(cache, addr);
+
     evicted_line->valid = line->valid;
     // TODO make address for evicted line??
-    evicted_line->addr = ((line->tag << (cache->s + cache->b)) | (set_index << cache->b) | block_offset);
+    evicted_line->addr =
+        ((line->tag << (cache->s + cache->b)) | (set_index << cache->b) | block_offset);
     evicted_line->data = line->data;
 
     if (line->dirty) {
@@ -240,8 +238,7 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
 void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 {
     /* your implementation */
-    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = get_line(cache, addr);
     // refelcts get_byte_val of isa.c
     *dest = line->data[block_offset];
@@ -255,8 +252,7 @@ void get_byte_cache(cache_t *cache, uword_t addr, byte_t *dest)
 void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
 {
     /* your implementation */
-    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = get_line(cache, addr);
     // reflects get_word_val of isa.c
     word_t val = 0;
@@ -275,8 +271,7 @@ void get_word_cache(cache_t *cache, uword_t addr, word_t *dest)
 void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
 {
     /* your implementation */
-    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = get_line(cache, addr);
     // reflects set_byte_val of isa.c
     line->data[block_offset] = val;
@@ -292,8 +287,7 @@ void set_byte_cache(cache_t *cache, uword_t addr, byte_t val)
 void set_word_cache(cache_t *cache, uword_t addr, word_t val)
 {
     /* your implementation */
-    unsigned int block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    uword_t block_offset = get_block_offset(cache, addr);
     cache_line_t *line = get_line(cache, addr);
     // reflects set_word_val of isa.c
     for (int i = 0; i < 8; i++) {
@@ -302,6 +296,28 @@ void set_word_cache(cache_t *cache, uword_t addr, word_t val)
     }
     // TODO dirty??
     line->dirty = true;
+}
+
+/*
+ * retrieve set_index from addr and return the value
+ */
+static uword_t get_set_index(cache_t *cache, uword_t addr) {
+    // left shift out tag: t = m - s - b
+    uword_t set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
+    // move to lower end: t + b = m - s
+    set_index >>= (ADDRESS_LENGTH - cache->s);
+    return set_index;
+}
+
+/*
+ * retrieve block_offset from addr and returnt the value
+ */
+static uword_t get_block_offset(cache_t *cache, uword_t addr) {
+    // left shift out tag and set index: t + s = m - b
+    uword_t block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    // undo to move back to lower end
+    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    return block_offset;
 }
 
 /*
