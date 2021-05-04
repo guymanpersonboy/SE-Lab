@@ -1036,6 +1036,7 @@ void do_stall_check()
             // normal case
             decode_state->op = pipe_cntl("ID", false, true);
             execute_state->op = pipe_cntl("EX", false, true);
+            // vala is valp i.e. fall through
             fetch_input->predPC = execute_output->vala;
         }
         break;
