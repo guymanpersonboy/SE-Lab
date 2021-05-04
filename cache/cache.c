@@ -218,10 +218,11 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     // copy dirty bit, update for old
     evicted_line->dirty = old_line->dirty;
     old_line->dirty = operation == WRITE;
-    old_line->tag = addr >> (cache->s + cache->b);
+    // copy address, update for old
     evicted_line->addr = (old_line->tag << (cache->s + cache->b)) | (set_index << cache->b);
+    old_line->tag = addr >> (cache->s + cache->b);
+    // copy data, update for old
     memcpy(evicted_line->data, old_line->data, B);
-
     if (incoming_data) {
         memcpy(old_line->data, incoming_data, B);
     }

@@ -1043,6 +1043,12 @@ void do_stall_check()
     default:
         break;
     }
+
+    if (decode_output->icode == I_HALT || execute_output->icode == I_HALT ||
+            memory_output->icode == I_HALT) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
+    }
 }
 
 /*
