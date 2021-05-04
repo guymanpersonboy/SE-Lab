@@ -9,6 +9,7 @@
 #     int y = x + 2;
 #     return y + y;
 # }
+    irmovq stack, %rsp  # Initialize stack
     irmovq $1, %rax
     call zero
     nop
@@ -21,4 +22,6 @@
 zero:               # zero:
     xorq %rax, %rax
     ret
-    halt            # Not executed
+    halt            #   Not executed
+.pos 0x49
+stack:               # stack: Stack pointer
