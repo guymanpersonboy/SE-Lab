@@ -185,21 +185,16 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
 bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
-    uword_t set_index = get_set_index(cache, addr);
-    cache_set_t set = cache->sets[set_index];
+    cache_line_t *line = get_line(cache, addr);
     // right shift out set index and block offset
-    uword_t tag = addr >> (cache->s + cache->b);
 
-    for (unsigned int i = 0; i < cache->E; i++) {
-        if (set.lines[i].valid && set.lines[i].tag == tag) {
-            hit_count++;
-            lru_stamp++;
-            if (operation == WRITE) {
-                set.lines[i].dirty = true;
-            }
-            
-            return true;
+    if (line) {
+        hit_count++;
+        if (operation == WRITE) {
+            line->dirty = true;
         }
+        
+        return true;
     }
     // false valid bit or incorrect tag
     return false;
@@ -224,17 +219,16 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     evicted_line->valid = old_line->valid;
     old_line->valid = true;
     evicted_line->dirty = old_line->dirty;
+    old_line->dirty = operation == WRITE;
+
     evicted_line->addr = (old_line->tag << (cache->s + cache->b)) | (set_index << cache->b);
     memcpy(evicted_line->data, old_line->data, B);
 
     if (incoming_data) {
         memcpy(old_line->data, incoming_data, B);
-        if (operation == WRITE) {
-            old_line->dirty = true;
-        }
     }
 
-    if (evicted_line->dirty && evicted_line->valid) {
+    if (evicted_line->valid && evicted_line->dirty) {
         dirty_eviction_count++;
     } else if (evicted_line->valid) {
         clean_eviction_count++;
