@@ -34,7 +34,6 @@ int dirty_eviction_count = 0;
 //Increment when a clean eviction occurs
 int clean_eviction_count = 0;
 
-// TODO: add more globals, structs, macros if necessary
 // keep track of the current lru time stamp
 static uword_t lru_stamp = 0;
 
@@ -161,22 +160,20 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
     uword_t set_index = get_set_index(cache, addr);
     cache_set_t set = cache->sets[set_index];
 
-    uword_t cur_lru = set.lines[0].lru;
-    unsigned int lru_way = 0;
-    for (unsigned int i = 0; i < cache->E; i++) {
-        // keep track of lru and its way in case we need it
-        if (set.lines[i].lru < cur_lru) {
-            cur_lru = set.lines[i].lru;
-            lru_way = i;
-        }
+    cache_line_t *lru_line = &set.lines[0];
+    for (unsigned int i = 1; i < cache->E; i++) {
         // Case R2a: cache miss, no replacement
         if (!set.lines[i].valid) {
             return &set.lines[i];
         }
+        // update lru_line 
+        if (set.lines[i].lru < lru_line->lru) {
+            lru_line = &set.lines[i];
+        }
     }
-
+    
     // Case R2b: cache miss, replacement
-    return &set.lines[lru_way];
+    return lru_line;
 }
 
 /* TODO:
@@ -195,9 +192,9 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
         if (operation == WRITE) {
             line->dirty = true;
         }
-        
         return true;
     }
+
     // false valid bit or incorrect tag
     miss_count++;
     return false;

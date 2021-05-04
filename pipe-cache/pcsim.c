@@ -93,13 +93,23 @@ int sim_main(int argc, char **argv)
     int b = -1;
     int d = -1;
 
-    // TODO: Add support for new command line flags.
-
     /* your implementation */
 
     /* Parse the command line arguments */
-    while ((c = getopt(argc, argv, "htl:v:i")) != -1) {
+    while ((c = getopt(argc, argv, "sEbdhtl:v:i")) != -1) {
         switch(c) {
+        case 's':
+            s = atoi(optarg);
+            break;
+        case 'E':
+            E = atoi(optarg);
+            break;
+        case 'b':
+            b = atoi(optarg);
+            break;
+        case 'd':
+            d = atoi(optarg);
+            break;
         case 'h':
             usage(argv[0]);
             break;
@@ -1051,6 +1061,20 @@ void do_stall_check()
 
     default:
         break;
+    }
+
+    if (dmem_status == IN_FLIGHT) {
+            fetch_state->op = pipe_cntl("PC", true, false);
+            decode_state->op = pipe_cntl("ID", true, false);
+            execute_state->op = pipe_cntl("EX", true, false);
+            memory_state->op = pipe_cntl("MEM", true, false);
+            writeback_state->op = pipe_cntl("WB", true, false);
+    }
+
+    if (decode_output->icode == I_HALT || execute_output->icode == I_HALT ||
+            memory_output->icode == I_HALT) {
+        fetch_state->op = pipe_cntl("PC", true, false);
+        decode_state->op = pipe_cntl("ID", false, true);
     }
 }
 
