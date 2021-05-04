@@ -186,17 +186,15 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 {
     /* your implementation */
     cache_line_t *line = get_line(cache, addr);
-    // right shift out set index and block offset
 
     if (line) {
         hit_count++;
-        if (operation == WRITE) {
-            line->dirty = true;
-        }
+        line->dirty = operation == WRITE;
         
         return true;
     }
     // false valid bit or incorrect tag
+    miss_count++;
     return false;
 }
 
@@ -209,18 +207,18 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     size_t B = (size_t)pow(2, cache->b);
     evicted_line_t *evicted_line = malloc(sizeof(evicted_line_t));
     evicted_line->data = (byte_t *) calloc(B, sizeof(byte_t));
-    miss_count++;
 
     /* your implementation */
     uword_t set_index = get_set_index(cache, addr);
     cache_line_t *old_line = select_line(cache, addr);
 
-    // copy old_line data over to evicted_line
+    // copy valid bit, update for old
     evicted_line->valid = old_line->valid;
     old_line->valid = true;
+    // copy dirty bit, update for old
     evicted_line->dirty = old_line->dirty;
     old_line->dirty = operation == WRITE;
-
+    old_line->tag = addr >> (cache->s + cache->b);
     evicted_line->addr = (old_line->tag << (cache->s + cache->b)) | (set_index << cache->b);
     memcpy(evicted_line->data, old_line->data, B);
 
@@ -307,7 +305,7 @@ static uword_t get_set_index(cache_t *cache, uword_t addr) {
     // left shift out tag: t = m - s - b
     uword_t set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
     // move to lower end: t + b = m - s
-    set_index >>= (ADDRESS_LENGTH - cache->s);
+    set_index = set_index >> (ADDRESS_LENGTH - cache->s);
     return set_index;
 }
 
@@ -318,7 +316,7 @@ static uword_t get_block_offset(cache_t *cache, uword_t addr) {
     // left shift out tag and set index: t + s = m - b
     uword_t block_offset = addr << (ADDRESS_LENGTH - cache->b);
     // undo to move back to lower end
-    block_offset >>= (ADDRESS_LENGTH - cache->b);
+    block_offset = block_offset >> (ADDRESS_LENGTH - cache->b);
     return block_offset;
 }
 
