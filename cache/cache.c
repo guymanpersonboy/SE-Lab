@@ -16,8 +16,6 @@
 #include <string.h>
 #include <errno.h>
 #include "cache.h"
-static uword_t get_set_index(cache_t *cache, uword_t addr);
-static uword_t get_block_offset(cache_t *cache, uword_t addr);
 
 #define ADDRESS_LENGTH 64
 
@@ -70,8 +68,6 @@ cache_t *create_cache(int s_in, int b_in, int E_in, int d_in)
         }
     }
 
-    // TODO: add more code for initialization
-
     return cache;
 }
 
@@ -122,6 +118,17 @@ void free_cache(cache_t *cache)
     free(cache);
 }
 
+/*
+ * helper function to retrieve set_index from addr and return the value
+ */
+static uword_t get_set_index(cache_t *cache, uword_t addr) {
+    // left shift out tag: t = m - s - b
+    uword_t set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
+    // move to lower end: t + b = m - s
+    set_index = set_index >> (ADDRESS_LENGTH - cache->s);
+    return set_index;
+}
+
 /*  TODO:
  * Get the line for address contained in the cache
  * On hit, return the cache line holding the address
@@ -137,8 +144,6 @@ cache_line_t *get_line(cache_t *cache, uword_t addr)
 
     for (unsigned int i = 0; i < cache->E; i++) {
         if (set.lines[i].valid && set.lines[i].tag == tag) {
-            set.lines[i].lru = lru_stamp;
-            lru_stamp++;
             return &set.lines[i];
         }
     }
@@ -166,15 +171,11 @@ cache_line_t *select_line(cache_t *cache, uword_t addr)
         }
         // Case R2a: cache miss, no replacement
         if (!set.lines[i].valid) {
-            set.lines->lru = lru_stamp;
-            lru_stamp++;
             return &set.lines[i];
         }
     }
 
     // Case R2b: cache miss, replacement
-    set.lines->lru = lru_stamp;
-    lru_stamp++;
     return &set.lines[lru_way];
 }
 
@@ -189,7 +190,11 @@ bool check_hit(cache_t *cache, uword_t addr, operation_t operation)
 
     if (line) {
         hit_count++;
-        line->dirty = operation == WRITE;
+        line->lru = lru_stamp++;
+        // a line remains dirty for a READ operation
+        if (operation == WRITE) {
+            line->dirty = true;
+        }
         
         return true;
     }
@@ -212,6 +217,7 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     uword_t set_index = get_set_index(cache, addr);
     cache_line_t *old_line = select_line(cache, addr);
 
+    old_line->lru = lru_stamp++;
     // copy valid bit, update for old
     evicted_line->valid = old_line->valid;
     old_line->valid = true;
@@ -234,6 +240,17 @@ evicted_line_t *handle_miss(cache_t *cache, uword_t addr, operation_t operation,
     }
 
     return evicted_line;
+}
+
+/*
+ * helper function to retrieve block_offset from addr and returnt the value
+ */
+static uword_t get_block_offset(cache_t *cache, uword_t addr) {
+    // left shift out tag and set index: t + s = m - b
+    uword_t block_offset = addr << (ADDRESS_LENGTH - cache->b);
+    // undo to move back to lower end
+    block_offset = block_offset >> (ADDRESS_LENGTH - cache->b);
+    return block_offset;
 }
 
 /* TODO:
@@ -297,28 +314,6 @@ void set_word_cache(cache_t *cache, uword_t addr, word_t val)
         line->data[block_offset + i] = (byte_t) val & 0xFF;
         val >>= 8;
     }
-}
-
-/*
- * helper function to retrieve set_index from addr and return the value
- */
-static uword_t get_set_index(cache_t *cache, uword_t addr) {
-    // left shift out tag: t = m - s - b
-    uword_t set_index = addr << (ADDRESS_LENGTH - cache->s - cache->b);
-    // move to lower end: t + b = m - s
-    set_index = set_index >> (ADDRESS_LENGTH - cache->s);
-    return set_index;
-}
-
-/*
- * helper function to retrieve block_offset from addr and returnt the value
- */
-static uword_t get_block_offset(cache_t *cache, uword_t addr) {
-    // left shift out tag and set index: t + s = m - b
-    uword_t block_offset = addr << (ADDRESS_LENGTH - cache->b);
-    // undo to move back to lower end
-    block_offset = block_offset >> (ADDRESS_LENGTH - cache->b);
-    return block_offset;
 }
 
 /*
